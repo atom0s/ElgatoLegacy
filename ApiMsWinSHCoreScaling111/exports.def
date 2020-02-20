@@ -1,0 +1,11 @@
+LIBRARY
+EXPORTS
+    GetDpiForMonitor                    = expGetDpiForMonitor
+    GetProcessDpiAwareness              = expGetProcessDpiAwareness
+    GetScaleFactorForDevice             = expGetScaleFactorForDevice
+    GetScaleFactorForMonitor            = expGetScaleFactorForMonitor
+    RegisterScaleChangeEvent            = expRegisterScaleChangeEvent
+    RegisterScaleChangeNotifications    = expRegisterScaleChangeNotifications
+    RevokeScaleChangeNotifications      = expRevokeScaleChangeNotifications
+    SetProcessDpiAwareness              = expSetProcessDpiAwareness
+    UnregisterScaleChangeEvent          = expUnregisterScaleChangeEvent

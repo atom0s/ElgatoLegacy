@@ -1,0 +1,8 @@
+LIBRARY
+EXPORTS
+    GetFileVersionInfoW         = expGetFileVersionInfoW
+    GetFileVersionInfoSizeW     = expGetFileVersionInfoSizeW
+    GetFileVersionInfoExW       = expGetFileVersionInfoExW
+    GetFileVersionInfoSizeExW   = expGetFileVersionInfoSizeExW
+    VerFindFileW                = expVerFindFileW
+    VerQueryValueW              = expVerQueryValueW
