@@ -19,7 +19,12 @@
  */
 
 #pragma comment(lib, "Version.lib")
+#pragma comment(lib, "WtsApi32.lib")
 #include <Windows.h>
+#include <WtsApi32.h>
+
+#pragma comment(lib, "../thirdparty/detours.lib")
+#include "../thirdparty/detours.h"
 
 /**
  * GetFileVersionInfoW proxy.
@@ -88,6 +93,55 @@ BOOL __stdcall expVerQueryValueW(LPCVOID pBlock, LPCWSTR lpSubBlock, LPVOID* lpl
 }
 
 /**
+ * Detour Prototypes
+ */
+extern "C"
+{
+    auto Real_WTSQuerySessionInformationW = static_cast<decltype(::WTSQuerySessionInformationW)*>(::WTSQuerySessionInformationW);
+};
+
+/**
+ *  wtsapi32!WTSQuerySessionInformationW detour callback.
+ *
+ * @param {HANDLE} hServer - A handle to an RD Session Host server.
+ * @param {DWORD} SessionId - A Remote Desktop Services session identifier.
+ * @param {WTS_INFO_CLASS} WTSInfoClass - A value of the WTS_INFO_CLASS enumeration that indicates the type of session information to retrieve in a call to the WTSQuerySessionInformation function.
+ * @param {LPWSTR} ppBuffer - A pointer to a variable that receives a pointer to the requested information.
+ * @param {DWORD*} pBytesReturned - A pointer to a variable that receives the size, in bytes, of the data returned in ppBuffer.
+ * @return {BOOL} Non-zero on success, FALSE otherwise.
+ */
+BOOL __stdcall Mine_WTSQuerySessionInformationW(HANDLE hServer, DWORD SessionId, WTS_INFO_CLASS WTSInfoClass, LPWSTR* ppBuffer, DWORD* pBytesReturned)
+{
+    // Allow the actual call to happen..
+    const auto ret = Real_WTSQuerySessionInformationW(hServer, SessionId, WTSInfoClass, ppBuffer, pBytesReturned);
+    if (!ret)
+        return ret;
+
+    // Check for session info lookups..
+    if (WTSInfoClass == WTS_INFO_CLASS::WTSSessionInfoEx)
+    {
+        // Obtain the session information data..
+        const auto session = (WTSINFOEXW*)*ppBuffer;
+
+        // Force the unlock state of the session..
+        session->Data.WTSInfoExLevel1.SessionFlags = WTS_SESSIONSTATE_UNLOCK;
+    }
+
+    return ret;
+}
+
+/**
+ * Hooks a specific API to fix session lock lookups causing StreamDecks to not function on Windows 7.
+ */
+void __stdcall ApplySessionPatch(void)
+{
+    ::DetourTransactionBegin();
+    ::DetourUpdateThread(::GetCurrentThread());
+    ::DetourAttach(&(PVOID&)Real_WTSQuerySessionInformationW, Mine_WTSQuerySessionInformationW);
+    ::DetourTransactionCommit();
+}
+
+/**
  * Module entry point.
  * 
  * @param {HINSTANCE} hInstDLL - The module instance handle.
@@ -101,6 +155,7 @@ BOOL APIENTRY DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpReserved)
     {
         case DLL_PROCESS_ATTACH:
             ::DisableThreadLibraryCalls(hInstDLL);
+            ApplySessionPatch();
             return TRUE;
         default:
             break;
