@@ -26,6 +26,10 @@
 #pragma comment(lib, "../thirdparty/detours.lib")
 #include "../thirdparty/detours.h"
 
+#ifndef STATUS_SUCCESS
+#define STATUS_SUCCESS 0x00000000
+#endif
+
 /**
  * GetFileVersionInfoW proxy.
  * 
@@ -97,7 +101,11 @@ BOOL __stdcall expVerQueryValueW(LPCVOID pBlock, LPCWSTR lpSubBlock, LPVOID* lpl
  */
 extern "C"
 {
+    // Windows 7 Session Patching
     auto Real_WTSQuerySessionInformationW = static_cast<decltype(::WTSQuerySessionInformationW)*>(::WTSQuerySessionInformationW);
+
+    // Plugin List Bypass Windows Version Check
+    NTSTATUS /**/ (NTAPI* Real_RtlGetVersion)(PRTL_OSVERSIONINFOW lpVersionInformation) = nullptr;
 };
 
 /**
@@ -131,13 +139,46 @@ BOOL __stdcall Mine_WTSQuerySessionInformationW(HANDLE hServer, DWORD SessionId,
 }
 
 /**
- * Hooks a specific API to fix session lock lookups causing StreamDecks to not function on Windows 7.
+ * ntdll!RtlGetVersion detour callback.
+ *
+ * @param {PRTL_OSVERSIONINFOW} lpVersionInformation - Pointer to either a RTL_OSVERSIONINFOW structure or a RTL_OSVERSIONINFOEXW structure that contains the version information about the currently running operating system.
+ * @return {NTSTATUS} STATUS_SUCCESS on success.
  */
-void __stdcall ApplySessionPatch(void)
+NTSTATUS NTAPI Mine_RtlGetVersion(PRTL_OSVERSIONINFOW lpVersionInformation)
 {
+    const auto res = Real_RtlGetVersion(lpVersionInformation);
+    if (res == STATUS_SUCCESS)
+    {
+        // Fake the return as Windows 10 (1909 - 18363.592)
+        lpVersionInformation->dwMajorVersion = 0x0A;
+        lpVersionInformation->dwMinorVersion = 0x00;
+        lpVersionInformation->dwBuildNumber  = 0x47BB;
+        lpVersionInformation->dwPlatformId   = 0x02;
+    }
+
+    return res;
+}
+
+/**
+ * Applies detours to functions that we patch to allow various fixes/features to work.
+ */
+void __stdcall ApplyDetours(void)
+{
+    // Obtain the RtlGetVersion function address..
+    auto ntdll = ::GetModuleHandleA(u8"ntdll.dll");
+    if (ntdll != nullptr)
+        Real_RtlGetVersion = (decltype(Real_RtlGetVersion))::GetProcAddress(ntdll, u8"RtlGetVersion");
+
     ::DetourTransactionBegin();
     ::DetourUpdateThread(::GetCurrentThread());
+
+    // Windows 7 Session Patch
     ::DetourAttach(&(PVOID&)Real_WTSQuerySessionInformationW, Mine_WTSQuerySessionInformationW);
+
+    // Plugin List Bypass Windows Version Check
+    if (Real_RtlGetVersion != nullptr)
+        ::DetourAttach(&(PVOID&)Real_RtlGetVersion, Mine_RtlGetVersion);
+
     ::DetourTransactionCommit();
 }
 
@@ -155,7 +196,7 @@ BOOL APIENTRY DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpReserved)
     {
         case DLL_PROCESS_ATTACH:
             ::DisableThreadLibraryCalls(hInstDLL);
-            ApplySessionPatch();
+            ApplyDetours();
             return TRUE;
         default:
             break;
