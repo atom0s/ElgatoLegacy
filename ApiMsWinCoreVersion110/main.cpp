@@ -21,6 +21,7 @@
 #pragma comment(lib, "Version.lib")
 #pragma comment(lib, "WtsApi32.lib")
 #include <Windows.h>
+#include <string>
 #include <WtsApi32.h>
 
 #pragma comment(lib, "../thirdparty/detours.lib")
@@ -101,12 +102,32 @@ BOOL __stdcall expVerQueryValueW(LPCVOID pBlock, LPCWSTR lpSubBlock, LPVOID* lpl
  */
 extern "C"
 {
-    // Windows 7 Session Patching
+    // Windows 7 Related Hooks
     auto Real_WTSQuerySessionInformationW = static_cast<decltype(::WTSQuerySessionInformationW)*>(::WTSQuerySessionInformationW);
+    auto Real_GetProcAddress              = static_cast<decltype(::GetProcAddress)*>(::GetProcAddress);
 
     // Plugin List Bypass Windows Version Check
     NTSTATUS /**/ (NTAPI* Real_RtlGetVersion)(PRTL_OSVERSIONINFOW lpVersionInformation) = nullptr;
 };
+
+/**
+ *  kernel32!GetProcAddress detour callback.
+ *
+ * @param {HMODULE} hModule - A handle to the DLL module that contains the function or variable.
+ * @param {LPCSTR} lpProcName - The function or variable name, or the function's ordinal value.
+ * @return {BOOL} The address of the exported function on success, NULL otherwise.
+ */
+FARPROC __stdcall Mine_GetProcAddress(HMODULE hModule, LPCSTR lpProcName)
+{
+    if (lpProcName != nullptr && (uint64_t)lpProcName > 0xFFFF)
+    {
+        // Redirect platform role lookups to the Windows 7 supported API..
+        if (_strnicmp(lpProcName, u8"PowerDeterminePlatformRoleEx", 28) == 0)
+            return Real_GetProcAddress(hModule, u8"PowerDeterminePlatformRole");
+    }
+
+    return Real_GetProcAddress(hModule, lpProcName);
+}
 
 /**
  *  wtsapi32!WTSQuerySessionInformationW detour callback.
@@ -172,7 +193,8 @@ void __stdcall ApplyDetours(void)
     ::DetourTransactionBegin();
     ::DetourUpdateThread(::GetCurrentThread());
 
-    // Windows 7 Session Patch
+    // Windows 7 Related Hooks
+    ::DetourAttach(&(PVOID&)Real_GetProcAddress, Mine_GetProcAddress);
     ::DetourAttach(&(PVOID&)Real_WTSQuerySessionInformationW, Mine_WTSQuerySessionInformationW);
 
     // Plugin List Bypass Windows Version Check
